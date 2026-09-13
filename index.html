@@ -161,6 +161,10 @@
   'use strict';
   const tg = window.Telegram && window.Telegram.WebApp ? window.Telegram.WebApp : null;
   if (tg) { tg.ready(); tg.expand(); }
+  const launchParams = new URLSearchParams(window.location.search);
+  const BOT_USERNAME = String(launchParams.get('phs_bot')||'').replace(/[^0-9A-Za-z_]/g,'');
+  const COMMAND_NAME = ['소모품','미니바'].includes(launchParams.get('phs_cmd')) ? launchParams.get('phs_cmd') : '소모품';
+  const INLINE_LAUNCH = Boolean(tg && tg.initDataUnsafe && tg.initDataUnsafe.query_id);
 
   const FLOORS = Array.from({length:19}, (_,i) => i + 4); // room master: 4F~22F
   const BASE_CATALOG = {
@@ -284,13 +288,41 @@
     for (const [floor,f] of Object.entries(state.floors)) for (const c of ['consumable','minibar']) if (Object.keys(f[c]).length) payload[c][floor]={...f[c]};
     return {type:'phs_daily_stock_v1',payload,custom_catalog:{consumable:[...customCatalog.consumable],minibar:[...customCatalog.minibar]}};
   }
+  function commandItem(item,qty) {
+    const name=/\s/.test(item)?`"${item}"`:item;
+    return `${name}${Number(qty)}`;
+  }
+  function buildCommand() {
+    const parts=[`/${COMMAND_NAME}`];
+    const floors=Object.keys(state.floors).map(Number).sort((a,b)=>a-b);
+    for (const floor of floors) {
+      const f=floorState(floor,false);
+      const items=[];
+      for (const category of ['consumable','minibar']) {
+        for (const item of CATALOG[category]) {
+          const qty=Number((f[category]||{})[item]||0);
+          if (qty>0) items.push(commandItem(item,qty));
+        }
+      }
+      if (items.length) parts.push(`${floor}층`,...items);
+    }
+    return parts.join(' ');
+  }
   function submit() {
     const data=JSON.stringify(buildPayload());
-    if (tg && typeof tg.sendData==='function' && tg.initData!==undefined) {
+    if (!INLINE_LAUNCH && tg && typeof tg.sendData==='function' && tg.initData!==undefined) {
       if (tg.HapticFeedback) tg.HapticFeedback.notificationOccurred('success');
       tg.sendData(data); return;
     }
-    el('demo').style.display='block'; el('demo').textContent='브라우저 미리보기 모드\n\n'+data;
+    const command=buildCommand();
+    if (BOT_USERNAME && tg && typeof tg.openTelegramLink==='function') {
+      if (tg.HapticFeedback) tg.HapticFeedback.notificationOccurred('success');
+      tg.openTelegramLink(`https://t.me/${BOT_USERNAME}?text=${encodeURIComponent(command)}`);
+      return;
+    }
+    el('demo').style.display='block';
+    el('demo').textContent='전송할 내용을 복사해 Telegram에 붙여넣어 주세요.\n\n'+command;
+    if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(command).catch(()=>{});
   }
   function normalizeSearch(value) { return String(value||'').toLowerCase().replace(/\s+/g,''); }
   function clearSearchHit() { document.querySelectorAll('.item.search-hit').forEach(row=>row.classList.remove('search-hit')); }
