@@ -366,23 +366,6 @@
     }
     return sections.join('\n\n');
   }
-  async function copyCompletionText(text) {
-    if (!text) return false;
-    try {
-      if (navigator.clipboard && navigator.clipboard.writeText) {
-        await navigator.clipboard.writeText(text);
-        return true;
-      }
-    } catch (_) {}
-    try {
-      const ta=document.createElement('textarea');
-      ta.value=text; ta.setAttribute('readonly','');
-      ta.style.position='fixed'; ta.style.opacity='0'; ta.style.pointerEvents='none';
-      document.body.appendChild(ta); ta.select();
-      const ok=document.execCommand('copy'); ta.remove();
-      return Boolean(ok);
-    } catch (_) { return false; }
-  }
   let submitInFlight=false;
   async function postCompletion(envelope) {
     if (!tg || !String(tg.initData||'')) throw new Error('Telegram 안에서 미니앱을 실행해주세요.');
@@ -413,17 +396,15 @@
     if (!plain) { notify('선택된 품목이 없습니다.'); return; }
     submitInFlight=true;
     try {
-      // Clipboard is a convenience copy only. Telegram delivery is authoritative:
-      // the server validates initData + payload, sends the existing preview to
-      // this operator's private chat, ACKs, and only then may the Mini App close.
-      await copyCompletionText(plain);
+      // Telegram delivery is authoritative. Close only after server ACK.
       await postCompletion(envelope);
       if (tg && tg.HapticFeedback) tg.HapticFeedback.notificationOccurred('success');
       closeMiniApp();
     } catch (err) {
       submitInFlight=false;
       if (tg && tg.HapticFeedback) tg.HapticFeedback.notificationOccurred('error');
-      notify(String((err&&err.message)||'결과 전송에 실패했습니다. 다시 눌러주세요.'));
+      const msg=String((err&&err.message)||'');
+      notify(msg==='Failed to fetch' ? '서버 연결에 실패했습니다. 잠시 후 다시 눌러주세요.' : (msg||'결과 전송에 실패했습니다. 다시 눌러주세요.'));
     }
   }
   function normalizeSearch(value) { return String(value||'').toLowerCase().replace(/\s+/g,''); }
