@@ -163,7 +163,13 @@
   const tg = window.Telegram && window.Telegram.WebApp ? window.Telegram.WebApp : null;
   if (tg) { tg.ready(); tg.expand(); }
   const launchParams = new URLSearchParams(window.location.search);
-  const BOT_USERNAME = String(launchParams.get('phs_bot')||'').replace(/[^0-9A-Za-z_]/g,'');
+  const DEFAULT_BOT_USERNAME = 'PHS_Housemanbot';
+  const BOT_STORAGE_KEY = 'phs_daily_stock_bot_username_v1';
+  const launchBot = String(launchParams.get('phs_bot')||'').replace(/[^0-9A-Za-z_]/g,'');
+  let savedBot='';
+  try { savedBot=String(localStorage.getItem(BOT_STORAGE_KEY)||'').replace(/[^0-9A-Za-z_]/g,''); } catch (_) {}
+  const BOT_USERNAME = launchBot || savedBot || DEFAULT_BOT_USERNAME;
+  if (launchBot) { try { localStorage.setItem(BOT_STORAGE_KEY,launchBot); } catch (_) {} }
   const COMMAND_NAME = ['소모품','미니바'].includes(launchParams.get('phs_cmd')) ? launchParams.get('phs_cmd') : '소모품';
   const INLINE_LAUNCH = Boolean(tg && tg.initDataUnsafe && tg.initDataUnsafe.query_id);
 
@@ -319,7 +325,9 @@
     return `${name}${Number(qty)}`;
   }
   function buildCommand() {
-    const parts=[`/${COMMAND_NAME}`];
+    // `/소모품` parser accepts both consumable and minibar canonical items, so a
+    // single universal command is valid even when this page was opened directly.
+    const parts=['/소모품'];
     const floors=Object.keys(state.floors).map(Number).sort((a,b)=>a-b);
     for (const floor of floors) {
       const f=floorState(floor,false);
@@ -334,24 +342,79 @@
     }
     return parts.join(' ');
   }
-  function submit() {
+  function itemDisplay(item,qty) {
+    const unit=displayUnit(item);
+    return `${item}${Number(qty)}${unit}`;
+  }
+  function buildPlainText() {
+    const sections=[];
+    for (const [category,title] of [['consumable','금일 소모품'],['minibar','금일 미니바']]) {
+      const lines=[];
+      const floors=Object.keys(state.floors).map(Number).sort((a,b)=>a-b);
+      for (const floor of floors) {
+        const f=floorState(floor,false);
+        const items=[];
+        for (const item of CATALOG[category]) {
+          const qty=Number((f[category]||{})[item]||0);
+          if (qty>0) items.push(itemDisplay(item,qty));
+        }
+        if (items.length) lines.push(`${String(floor).padStart(2,'0')}층 ${items.join(' ')}`);
+      }
+      if (lines.length) sections.push([title,...lines].join('\n'));
+    }
+    return sections.join('\n\n');
+  }
+  async function copyCompletionText(text) {
+    if (!text) return false;
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        await navigator.clipboard.writeText(text);
+        return true;
+      }
+    } catch (_) {}
+    try {
+      const ta=document.createElement('textarea');
+      ta.value=text; ta.setAttribute('readonly','');
+      ta.style.position='fixed'; ta.style.opacity='0'; ta.style.pointerEvents='none';
+      document.body.appendChild(ta); ta.select();
+      const ok=document.execCommand('copy'); ta.remove();
+      return Boolean(ok);
+    } catch (_) { return false; }
+  }
+  function openOperatorPrivateChat(command) {
+    const bot=String(BOT_USERNAME||DEFAULT_BOT_USERNAME).replace(/[^0-9A-Za-z_]/g,'');
+    if (!bot) return false;
+    const url=`https://t.me/${bot}?text=${encodeURIComponent(command)}`;
+    if (tg && typeof tg.openTelegramLink==='function') tg.openTelegramLink(url);
+    else window.location.href=url;
+    return true;
+  }
+  async function submit() {
     const data=JSON.stringify(buildPayload());
-    if (!INLINE_LAUNCH && tg && typeof tg.sendData==='function' && tg.initData!==undefined) {
+    const plain=buildPlainText();
+    const copied=await copyCompletionText(plain);
+
+    // Backward compatibility only: an old reply-keyboard launch can still deliver
+    // WebAppData automatically. New /소모품 launches are inline by operator request.
+    if (!INLINE_LAUNCH && tg && typeof tg.sendData==='function' && tg.initData!==undefined && launchParams.get('phs_transport')==='keyboard') {
       if (tg.HapticFeedback) tg.HapticFeedback.notificationOccurred('success');
       tg.sendData(data);
       return;
     }
+
     const command=buildCommand();
-    // Old messages can still contain the pre-.135 inline WebApp button.  Inline
-    // Web Apps cannot use sendData -> web_app_data, so never close silently.
-    // Keep the entered result visible/copyable and ask the operator to reopen
-    // from a fresh /소모품 or /미니바 reply-keyboard button.
     el('demo').style.display='block';
-    el('demo').textContent=(INLINE_LAUNCH
-      ? '이전 미니앱 버튼으로 열렸습니다. /소모품 또는 /미니바를 다시 입력해 새 버튼으로 열어주세요.\n\n'
-      : 'Telegram 전송 경로를 확인해주세요.\n\n')+command;
-    if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(command).catch(()=>{});
-    notify(INLINE_LAUNCH?'이전 버튼입니다. 입력 내용은 복사했습니다.':'전송 경로를 확인해주세요. 내용은 복사했습니다.');
+    el('demo').textContent=plain;
+    if (tg && tg.HapticFeedback) tg.HapticFeedback.notificationOccurred('success');
+    const opened=openOperatorPrivateChat(command);
+    if (!opened) {
+      notify(copied?'완료 내용을 복사했습니다. 서하얀 1:1 대화방에 붙여넣어 주세요.':'완료 내용을 화면에 표시했습니다.');
+      return;
+    }
+    // Telegram does not permit a static inline/menu Mini App to auto-send a bot
+    // message without a server-side answerWebAppQuery bridge. Put the canonical
+    // command in the operator's 1:1 composer instead, while the human-readable
+    // completion text is already on the clipboard.
   }
   function normalizeSearch(value) { return String(value||'').toLowerCase().replace(/\s+/g,''); }
   function clearSearchHit() { document.querySelectorAll('.item.search-hit').forEach(row=>row.classList.remove('search-hit')); }
