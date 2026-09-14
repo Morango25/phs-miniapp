@@ -50,10 +50,11 @@
     .item:last-child { border-bottom:0; }
     .item.search-hit { background:color-mix(in srgb,var(--accent) 15%,var(--card)); outline:2px solid color-mix(in srgb,var(--accent) 48%,transparent); outline-offset:-2px; }
     .item-name { min-width:0; font-size:14px; font-weight:800; line-height:1.1; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; margin:0; }
-    .stepper { display:grid; grid-template-columns:24px 26px 24px; gap:2px; align-items:center; }
+    .stepper { display:grid; grid-template-columns:24px 34px 24px; gap:2px; align-items:center; }
     .stepper button { width:24px; height:28px; border:0; border-radius:7px; background:var(--soft); color:var(--accent); font-size:18px; font-weight:650; line-height:1; padding:0; }
     .stepper button:disabled { opacity:.28; }
-    .qty { width:26px; height:28px; display:grid; place-items:center; border:1px solid var(--line); border-radius:7px; font-size:14px; font-weight:850; background:color-mix(in srgb,var(--card) 94%,var(--bg)); }
+    .qty { width:34px; height:28px; border:1px solid var(--line); border-radius:7px; font-size:14px; font-weight:850; text-align:center; padding:0 2px; outline:0; color:var(--text); background:color-mix(in srgb,var(--card) 94%,var(--bg)); }
+    .qty:focus { border-color:var(--accent); box-shadow:0 0 0 2px color-mix(in srgb,var(--accent) 14%,transparent); }
     .qty.nonzero { border-color:color-mix(in srgb,var(--accent) 45%,var(--line)); color:var(--accent); background:var(--soft); }
     .add-item-wrap { margin-top:7px; }
     .add-item { width:100%; min-height:40px; border:1px dashed color-mix(in srgb,var(--accent) 55%,var(--line)); border-radius:12px; background:color-mix(in srgb,var(--accent) 6%,var(--card)); color:var(--accent); font-weight:850; font-size:13px; }
@@ -88,9 +89,9 @@
       .category-head span { display:none; }
       .item { min-height:37px; padding:4px 4px; gap:3px; }
       .item-name { font-size:13.4px; }
-      .stepper { grid-template-columns:22px 24px 22px; gap:1px; }
+      .stepper { grid-template-columns:22px 32px 22px; gap:1px; }
       .stepper button { width:22px; height:27px; font-size:17px; }
-      .qty { width:24px; height:27px; font-size:12.5px; }
+      .qty { width:32px; height:27px; font-size:12.5px; }
       .footer-inner { grid-template-columns:.92fr 1.28fr; }
       .reset,.submit { font-size:13px; }
     }
@@ -232,11 +233,17 @@
   }
   function floorQty(floor) { return categoryQty(floor,'consumable') + categoryQty(floor,'minibar'); }
   function qtyOf(category,item) { return Number((floorState(state.floor,false)[category] || {})[item] || 0); }
-  function changeQty(category,item,delta) {
+  function storeQty(category,item,value) {
     const f=floorState(state.floor,true);
-    const next=Math.max(0,Math.min(qtyLimit(item),Number(f[category][item]||0)+delta));
+    const digits=String(value ?? '').replace(/[^0-9]/g,'');
+    const parsed=digits ? Number.parseInt(digits,10) : 0;
+    const next=Math.max(0,Math.min(qtyLimit(item),Number.isFinite(parsed)?parsed:0));
     if (next) f[category][item]=next; else delete f[category][item];
     cleanupFloor(state.floor);
+    return next;
+  }
+  function changeQty(category,item,delta) {
+    storeQty(category,item,Number(qtyOf(category,item)||0)+delta);
     if (tg && tg.HapticFeedback) tg.HapticFeedback.selectionChanged();
     render();
   }
@@ -276,8 +283,19 @@
       const name=document.createElement('div'); name.className='item-name'; const label=DISPLAY[item]||item; const unit=displayUnit(item); name.textContent=label; name.title=unit?`${label} · ${unit}`:(item===DISPLAY[item]||!DISPLAY[item]?item:`${DISPLAY[item]} · ${item}`);
       const step=document.createElement('div'); step.className='stepper';
       const minus=document.createElement('button'); minus.type='button'; minus.textContent='−'; minus.disabled=qtyOf(category,item)<=0; minus.onclick=()=>changeQty(category,item,-1);
-      const qty=document.createElement('div'); qty.className='qty'+(qtyOf(category,item)>0?' nonzero':''); qty.textContent=qtyOf(category,item);
+      const qty=document.createElement('input');
+      qty.type='text'; qty.inputMode='numeric'; qty.pattern='[0-9]*'; qty.autocomplete='off'; qty.enterKeyHint='done';
+      qty.setAttribute('aria-label',`${label} 수량`); qty.className='qty'+(qtyOf(category,item)>0?' nonzero':''); qty.value=String(qtyOf(category,item));
       const plus=document.createElement('button'); plus.type='button'; plus.textContent='+'; plus.disabled=qtyOf(category,item)>=qtyLimit(item); plus.onclick=()=>changeQty(category,item,1);
+      qty.onfocus=()=>{ try { qty.select(); } catch (_) {} };
+      qty.oninput=()=>{
+        const next=storeQty(category,item,qty.value);
+        qty.value=String(next);
+        qty.classList.toggle('nonzero',next>0);
+        minus.disabled=next<=0; plus.disabled=next>=qtyLimit(item);
+        renderFloors(); renderStatus();
+      };
+      qty.onblur=()=>{ qty.value=String(qtyOf(category,item)); };
       step.append(minus,qty,plus); row.append(name,step); root.append(row);
     }
   }
@@ -320,21 +338,20 @@
     const data=JSON.stringify(buildPayload());
     if (!INLINE_LAUNCH && tg && typeof tg.sendData==='function' && tg.initData!==undefined) {
       if (tg.HapticFeedback) tg.HapticFeedback.notificationOccurred('success');
-      tg.sendData(data); return;
-    }
-    const command=buildCommand();
-    if (BOT_USERNAME && tg && typeof tg.openTelegramLink==='function') {
-      if (tg.HapticFeedback) tg.HapticFeedback.notificationOccurred('success');
-      tg.openTelegramLink(`https://t.me/${BOT_USERNAME}?text=${encodeURIComponent(command)}`);
-      // Since Telegram 7.0 openTelegramLink no longer closes the Mini App automatically.
-      // Close explicitly so the operator immediately sees the prepared command draft.
-      if (typeof tg.close==='function') setTimeout(()=>tg.close(),120);
+      tg.sendData(data);
       return;
     }
+    const command=buildCommand();
+    // Old messages can still contain the pre-.135 inline WebApp button.  Inline
+    // Web Apps cannot use sendData -> web_app_data, so never close silently.
+    // Keep the entered result visible/copyable and ask the operator to reopen
+    // from a fresh /소모품 or /미니바 reply-keyboard button.
     el('demo').style.display='block';
-    el('demo').textContent='Telegram 복귀 정보가 없어 자동 전송할 수 없습니다.\n\n'+command;
+    el('demo').textContent=(INLINE_LAUNCH
+      ? '이전 미니앱 버튼으로 열렸습니다. /소모품 또는 /미니바를 다시 입력해 새 버튼으로 열어주세요.\n\n'
+      : 'Telegram 전송 경로를 확인해주세요.\n\n')+command;
     if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(command).catch(()=>{});
-    notify('전송 경로를 확인해주세요. 내용은 복사했습니다.');
+    notify(INLINE_LAUNCH?'이전 버튼입니다. 입력 내용은 복사했습니다.':'전송 경로를 확인해주세요. 내용은 복사했습니다.');
   }
   function normalizeSearch(value) { return String(value||'').toLowerCase().replace(/\s+/g,''); }
   function clearSearchHit() { document.querySelectorAll('.item.search-hit').forEach(row=>row.classList.remove('search-hit')); }
