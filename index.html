@@ -164,6 +164,8 @@
   if (tg) { tg.ready(); tg.expand(); }
   const launchParams = new URLSearchParams(window.location.search);
   const DEFAULT_BOT_USERNAME = 'PHS_Housemanbot';
+  const DEFAULT_SUBMIT_URL = 'https://morango-phs.duckdns.org/phs-miniapp/daily-stock/submit';
+  const SUBMIT_URL = String(launchParams.get('phs_submit')||DEFAULT_SUBMIT_URL).trim();
   const BOT_STORAGE_KEY = 'phs_daily_stock_bot_username_v1';
   const launchBot = String(launchParams.get('phs_bot')||'').replace(/[^0-9A-Za-z_]/g,'');
   let savedBot='';
@@ -381,40 +383,48 @@
       return Boolean(ok);
     } catch (_) { return false; }
   }
-  function openOperatorPrivateChat(command) {
-    const bot=String(BOT_USERNAME||DEFAULT_BOT_USERNAME).replace(/[^0-9A-Za-z_]/g,'');
-    if (!bot) return false;
-    const url=`https://t.me/${bot}?text=${encodeURIComponent(command)}`;
-    if (tg && typeof tg.openTelegramLink==='function') tg.openTelegramLink(url);
-    else window.location.href=url;
-    return true;
+  let submitInFlight=false;
+  async function postCompletion(envelope) {
+    if (!tg || !String(tg.initData||'')) throw new Error('Telegram 안에서 미니앱을 실행해주세요.');
+    if (!/^https:\/\//i.test(SUBMIT_URL)) throw new Error('완료 전송 주소가 설정되지 않았습니다.');
+    const response=await fetch(SUBMIT_URL,{
+      method:'POST',
+      mode:'cors',
+      credentials:'omit',
+      cache:'no-store',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({init_data:String(tg.initData||''),envelope}),
+    });
+    let result={};
+    try { result=await response.json(); } catch (_) {}
+    if (!response.ok || !result || result.ok!==true) {
+      throw new Error(String((result&&result.message)||'결과 전송에 실패했습니다. 다시 눌러주세요.'));
+    }
+    return result;
+  }
+  function closeMiniApp() {
+    if (tg && typeof tg.close==='function') { tg.close(); return; }
+    try { window.close(); } catch (_) {}
   }
   async function submit() {
-    const data=JSON.stringify(buildPayload());
+    if (submitInFlight) return;
+    const envelope=buildPayload();
     const plain=buildPlainText();
-    const copied=await copyCompletionText(plain);
-
-    // Backward compatibility only: an old reply-keyboard launch can still deliver
-    // WebAppData automatically. New /소모품 launches are inline by operator request.
-    if (!INLINE_LAUNCH && tg && typeof tg.sendData==='function' && tg.initData!==undefined && launchParams.get('phs_transport')==='keyboard') {
-      if (tg.HapticFeedback) tg.HapticFeedback.notificationOccurred('success');
-      tg.sendData(data);
-      return;
+    if (!plain) { notify('선택된 품목이 없습니다.'); return; }
+    submitInFlight=true;
+    try {
+      // Clipboard is a convenience copy only. Telegram delivery is authoritative:
+      // the server validates initData + payload, sends the existing preview to
+      // this operator's private chat, ACKs, and only then may the Mini App close.
+      await copyCompletionText(plain);
+      await postCompletion(envelope);
+      if (tg && tg.HapticFeedback) tg.HapticFeedback.notificationOccurred('success');
+      closeMiniApp();
+    } catch (err) {
+      submitInFlight=false;
+      if (tg && tg.HapticFeedback) tg.HapticFeedback.notificationOccurred('error');
+      notify(String((err&&err.message)||'결과 전송에 실패했습니다. 다시 눌러주세요.'));
     }
-
-    const command=buildCommand();
-    el('demo').style.display='block';
-    el('demo').textContent=plain;
-    if (tg && tg.HapticFeedback) tg.HapticFeedback.notificationOccurred('success');
-    const opened=openOperatorPrivateChat(command);
-    if (!opened) {
-      notify(copied?'완료 내용을 복사했습니다. 서하얀 1:1 대화방에 붙여넣어 주세요.':'완료 내용을 화면에 표시했습니다.');
-      return;
-    }
-    // Telegram does not permit a static inline/menu Mini App to auto-send a bot
-    // message without a server-side answerWebAppQuery bridge. Put the canonical
-    // command in the operator's 1:1 composer instead, while the human-readable
-    // completion text is already on the clipboard.
   }
   function normalizeSearch(value) { return String(value||'').toLowerCase().replace(/\s+/g,''); }
   function clearSearchHit() { document.querySelectorAll('.item.search-hit').forEach(row=>row.classList.remove('search-hit')); }
