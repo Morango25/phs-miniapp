@@ -179,6 +179,14 @@
     ]
   };
   const SEARCH_ALIASES = {"샴푸":["샴"],"컨디셔너":["컨디","컨"],"샤워젤":["샤워","샤"],"로션":["로"],"루파":["루"],"샤워캡":["캡"],"헤어밴드":["헤어","헤"],"코튼패드":["화장솜","패드"],"코튼버드":["면봉","버드"],"새니터리백":["위생백","새니","위생"],"덴탈키트":["칫솔","칫","덴탈","덴"],"슈미트":["미트"],"이어플러그":["귀마개","귀","이"],"비닐런드리백":["비닐런"],"천런드리백":["천","천런"],"슈백":[],"슬리퍼대":["슬대"],"슬리퍼소":["슬소"],"크리넥스":["크리","크","각티슈"],"롤휴지":["롤"],"AA배터리":["aa"],"AAA배터리":["aaa"],"코인배터리":["코인"],"지우개":["지"],"멀티플러그":["멀티","멀"],"연필":["연"],"볼펜":["볼","펜"],"와인오프너":["와인","와"],"충전케이블":["삼선","충전","충"],"쇼핑백대":["쇼대","백대"],"쇼핑백소":["쇼소","백소"],"비누":[],"배스솔트":["배스","배","입욕제","입욕"],"코카콜라":["코카","코"],"제로콜라":["제콜","제로","제"],"스프라이트":["스프","스"],"환타":["환"],"레드불":["레드","레"],"클럽소다":["클럽","소다","클"],"토닉워터":["토닉","토"],"하이트":["트"],"하이네켄":["네켄","켄"],"우유":["우"],"에비앙":[],"하리보":["하리","하"],"프링글스":["프링","프"],"엠앤엠즈":["엠엠","엠","mnm"],"킷캣":["킷"],"스니커즈":["스니"],"육포":["육"]};
+  const MAX_ONE_UNIT_BY_NORM = {
+    '루파':'봉지','샤워캡':'봉지','헤어밴드':'봉지','코튼패드':'봉지','코튼버드':'봉지','새니터리백':'봉지','덴탈키트':'봉지','슈미트':'봉지','이어플러그':'봉지','천런드리백':'봉지','슈백':'봉지',
+    '슬리퍼대':'박스','슬리퍼소':'박스','크리넥스':'박스','비누':'박스','배스솔트':'박스','커피3종':'박스','커피3종(스위트)':'박스',
+    '롤휴지':'묶음','비닐런드리백':'묶음','쇼핑백대':'묶음','쇼핑백소':'묶음'
+  };
+  const policyKey = value => String(value||'').toLowerCase().replace(/\s+/g,'');
+  const qtyLimit = item => Object.prototype.hasOwnProperty.call(MAX_ONE_UNIT_BY_NORM,policyKey(item)) ? 1 : 999;
+  const displayUnit = item => MAX_ONE_UNIT_BY_NORM[policyKey(item)] || '';
   const CUSTOM_STORAGE_KEY = 'phs_daily_stock_custom_catalog_v1';
   function loadCustomCatalog() {
     try {
@@ -226,7 +234,7 @@
   function qtyOf(category,item) { return Number((floorState(state.floor,false)[category] || {})[item] || 0); }
   function changeQty(category,item,delta) {
     const f=floorState(state.floor,true);
-    const next=Math.max(0,Math.min(999,Number(f[category][item]||0)+delta));
+    const next=Math.max(0,Math.min(qtyLimit(item),Number(f[category][item]||0)+delta));
     if (next) f[category][item]=next; else delete f[category][item];
     cleanupFloor(state.floor);
     if (tg && tg.HapticFeedback) tg.HapticFeedback.selectionChanged();
@@ -265,11 +273,11 @@
       const row=document.createElement('div');
       row.className='item'+(customCatalog[category].includes(item)?' custom-item':'');
       row.dataset.category=category; row.dataset.item=item; row.dataset.search=searchTerms(category,item).join('|');
-      const name=document.createElement('div'); name.className='item-name'; name.textContent=DISPLAY[item]||item; name.title=item===DISPLAY[item]||!DISPLAY[item]?item:`${DISPLAY[item]} · ${item}`;
+      const name=document.createElement('div'); name.className='item-name'; const label=DISPLAY[item]||item; const unit=displayUnit(item); name.textContent=label; name.title=unit?`${label} · ${unit}`:(item===DISPLAY[item]||!DISPLAY[item]?item:`${DISPLAY[item]} · ${item}`);
       const step=document.createElement('div'); step.className='stepper';
       const minus=document.createElement('button'); minus.type='button'; minus.textContent='−'; minus.disabled=qtyOf(category,item)<=0; minus.onclick=()=>changeQty(category,item,-1);
       const qty=document.createElement('div'); qty.className='qty'+(qtyOf(category,item)>0?' nonzero':''); qty.textContent=qtyOf(category,item);
-      const plus=document.createElement('button'); plus.type='button'; plus.textContent='+'; plus.onclick=()=>changeQty(category,item,1);
+      const plus=document.createElement('button'); plus.type='button'; plus.textContent='+'; plus.disabled=qtyOf(category,item)>=qtyLimit(item); plus.onclick=()=>changeQty(category,item,1);
       step.append(minus,qty,plus); row.append(name,step); root.append(row);
     }
   }
@@ -280,7 +288,7 @@
     el('consumableCount').textContent=`${c}개`;
     el('minibarCount').textContent=`${m}개`;
     el('submit').disabled=!t.qty;
-    el('submit').textContent=t.qty ? `전체 입력 완료 · ${t.qty}개` : '전체 입력 완료';
+    el('submit').textContent='전체 입력 완료';
   }
   function render() { renderFloors(); renderCategory('consumable','consumableItems'); renderCategory('minibar','minibarItems'); renderStatus(); }
   function buildPayload() {
@@ -318,11 +326,15 @@
     if (BOT_USERNAME && tg && typeof tg.openTelegramLink==='function') {
       if (tg.HapticFeedback) tg.HapticFeedback.notificationOccurred('success');
       tg.openTelegramLink(`https://t.me/${BOT_USERNAME}?text=${encodeURIComponent(command)}`);
+      // Since Telegram 7.0 openTelegramLink no longer closes the Mini App automatically.
+      // Close explicitly so the operator immediately sees the prepared command draft.
+      if (typeof tg.close==='function') setTimeout(()=>tg.close(),120);
       return;
     }
     el('demo').style.display='block';
-    el('demo').textContent='전송할 내용을 복사해 Telegram에 붙여넣어 주세요.\n\n'+command;
+    el('demo').textContent='Telegram 복귀 정보가 없어 자동 전송할 수 없습니다.\n\n'+command;
     if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(command).catch(()=>{});
+    notify('전송 경로를 확인해주세요. 내용은 복사했습니다.');
   }
   function normalizeSearch(value) { return String(value||'').toLowerCase().replace(/\s+/g,''); }
   function clearSearchHit() { document.querySelectorAll('.item.search-hit').forEach(row=>row.classList.remove('search-hit')); }
