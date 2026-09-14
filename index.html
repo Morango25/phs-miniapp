@@ -164,8 +164,9 @@
   if (tg) { tg.ready(); tg.expand(); }
   const launchParams = new URLSearchParams(window.location.search);
   const DEFAULT_BOT_USERNAME = 'PHS_Housemanbot';
-  const DEFAULT_SUBMIT_URL = 'https://morango-phs.duckdns.org/phs-miniapp/daily-stock/submit';
-  const SUBMIT_URL = String(launchParams.get('phs_submit')||DEFAULT_SUBMIT_URL).trim();
+  const DEFAULT_SUBMIT_PATH = '/phs-miniapp/daily-stock/submit';
+  const requestedSubmit = String(launchParams.get('phs_submit')||'').trim();
+  const SUBMIT_URL = requestedSubmit ? new URL(requestedSubmit, window.location.href).toString() : new URL(DEFAULT_SUBMIT_PATH, window.location.origin).toString();
   const BOT_STORAGE_KEY = 'phs_daily_stock_bot_username_v1';
   const launchBot = String(launchParams.get('phs_bot')||'').replace(/[^0-9A-Za-z_]/g,'');
   let savedBot='';
@@ -370,9 +371,10 @@
   async function postCompletion(envelope) {
     if (!tg || !String(tg.initData||'')) throw new Error('Telegram 안에서 미니앱을 실행해주세요.');
     if (!/^https:\/\//i.test(SUBMIT_URL)) throw new Error('완료 전송 주소가 설정되지 않았습니다.');
+    if (new URL(SUBMIT_URL).origin !== window.location.origin) throw new Error('완료 전송 주소가 현재 미니앱 주소와 다릅니다.');
     const response=await fetch(SUBMIT_URL,{
       method:'POST',
-      mode:'cors',
+      mode:'same-origin',
       credentials:'omit',
       cache:'no-store',
       headers:{'Content-Type':'application/json'},
