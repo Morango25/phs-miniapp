@@ -283,6 +283,20 @@
     const display=DISPLAY[item]||item;
     return [item,display,...(SEARCH_ALIASES[item]||[])].map(v=>normalizeSearch(v)).filter(Boolean);
   }
+  function fitItemName(node) {
+    if (!node) return;
+    node.style.fontSize='';
+    const base=parseFloat(getComputedStyle(node).fontSize)||14;
+    const minSize=10.5;
+    let size=base;
+    while (node.scrollWidth>node.clientWidth+1 && size>minSize) {
+      size=Math.max(minSize,size-0.5);
+      node.style.fontSize=`${size}px`;
+    }
+  }
+  function fitVisibleItemNames(root=document) {
+    root.querySelectorAll('.item-name').forEach(fitItemName);
+  }
   function renderCategory(category,rootId) {
     const root=el(rootId); root.innerHTML='';
     for (const item of CATALOG[category]) {
@@ -307,6 +321,7 @@
       qty.onblur=()=>{ qty.value=String(qtyOf(category,item)); };
       step.append(minus,qty,plus); row.append(name,step); root.append(row);
     }
+    requestAnimationFrame(()=>fitVisibleItemNames(root));
   }
   function renderStatus() {
     const c=categoryQty(state.floor,'consumable'), m=categoryQty(state.floor,'minibar'), t=totals();
@@ -318,6 +333,11 @@
     el('submit').textContent='전체 입력 완료';
   }
   function render() { renderFloors(); renderCategory('consumable','consumableItems'); renderCategory('minibar','minibarItems'); renderStatus(); }
+  let itemNameResizeTimer=0;
+  window.addEventListener('resize',()=>{
+    clearTimeout(itemNameResizeTimer);
+    itemNameResizeTimer=setTimeout(()=>fitVisibleItemNames(),80);
+  },{passive:true});
   function buildPayload() {
     const payload={consumable:{},minibar:{}};
     for (const [floor,f] of Object.entries(state.floors)) for (const c of ['consumable','minibar']) if (Object.keys(f[c]).length) payload[c][floor]={...f[c]};
